@@ -1,0 +1,21 @@
+{
+  "name": "kiken-yochi",
+  "version": "0.1.0",
+  "description": "鉄塔工事の朝の危険予知 (KY) を、ベテランの聞き方で作る道具",
+  "scripts": {
+    "dev": "tsx --env-file-if-exists=.env src/server.ts",
+    "typecheck": "tsc"
+  },
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "license": "MIT"
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>朝の KY</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>朝の KY</h1>
+    <p class="lead">今日の作業を話してください。職長のように聞き返して、危険予知の用紙を作ります。</p>
+  </header>
+
+  <main class="layout">
+    <section class="chat" aria-label="聞き取り">
+      <ol id="log" class="log"></ol>
+      <form id="ask" class="ask">
+        <label for="text" class="sr">今日の作業</label>
+        <textarea id="text" rows="3" placeholder="例: 今日は山の上の鉄塔で上部の部材交換。高さ 50m、4 人、うち 1 人は入って 2 か月。"></textarea>
+        <button id="send" type="submit">送る</button>
+      </form>
+    </section>
+
+    <section id="sheet" class="sheet" aria-label="KY 用紙" hidden></section>
+  </main>
+
+  <section class="evening" aria-label="夕方のヒヤリハット">
+    <h2>夕方：今日ヒヤッとしたこと</h2>
+    <form id="near" class="near">
+      <label for="nm-work">作業</label><input id="nm-work" name="work">
+      <label for="nm-what">何があったか</label><textarea id="nm-what" name="what_happened" rows="2"></textarea>
+      <label for="nm-cause">なぜ起きたか</label><textarea id="nm-cause" name="cause" rows="2"></textarea>
+      <label for="nm-measure">次からどうするか</label><textarea id="nm-measure" name="countermeasure" rows="2"></textarea>
+      <button type="submit">記録する</button>
+      <p id="near-msg" class="msg" role="status"></p>
+    </form>
+  </section>
+
+  <footer class="foot">作業の中止・続行の最後の判断は、現場の責任者が行います。</footer>
+  <script src="app.js"></script>
+</body>
+</html>
