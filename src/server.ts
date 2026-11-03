@@ -16,20 +16,32 @@ const TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
 };
 
-// 作業員の言語として受け付けるもの (public/i18n.js の CREW と合わせる)
+// 作業員の言語として受け付けるもの (public/app.js の CREW と合わせる)
 const CREW_LANGS = ["vi", "id", "fil", "zh", "my", "pt", "ne", "km"];
 
+// 会話はこのサーバーの中だけに持つ。古いものから捨てて、たまり続けないようにする。
 const sessions = new Map<string, Anthropic.Beta.BetaMessageParam[]>();
+const MAX_SESSIONS = 50;
+const MAX_BODY = 64 * 1024;
+const MAX_FIELD = 500;
 
 function validSite(v: any) {
-  const lat = Number(v?.lat);
+  if (v?.lat == null || v?.lon == null || v.lat === "" || v.lon === "") return null;
+  const lat = Number(v.lat);
   const lon = Number(v?.lon);
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
 }
 
+class BadRequest extends Error {}
+
+// 画面から送る JSON だけを受け付ける。ほかのサイトのページからの送信 (text/plain) は断る。
 async function readJson(req: IncomingMessage): Promise<any> {
+  if (!req.headers["content-type"]?.startsWith("application/json")) throw new BadRequest("送り方が正しくありません。");
   let body = "";
-  for await (const chunk of req) body += chunk;
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > MAX_BODY) throw new BadRequest("送る内容が長すぎます。");
+  }
   return JSON.parse(body || "{}");
 }
 
@@ -40,6 +52,7 @@ createServer(async (req, res) => {
   };
   try {
     if (req.method === "POST" && req.url === "/api/ky") {
+      if (!process.env.ANTHROPIC_API_KEY) return send(503, { error: "ANTHROPIC_API_KEY が設定されていません。.env.example を写して .env を作り、キーを入れてから起動し直してください。" });
       const { sessionId, text, site, workType, lang, crewLangs } = await readJson(req);
       if (typeof text !== "string" || !text.trim()) return send(400, { error: "作業の内容を入れてください。" });
       const id = typeof sessionId === "string" && sessions.has(sessionId) ? sessionId : randomUUID();
@@ -49,7 +62,9 @@ createServer(async (req, res) => {
         lang: lang === "en" ? "en" : "ja",
         crewLangs: Array.isArray(crewLangs) ? crewLangs.filter((c) => CREW_LANGS.includes(c)).slice(0, 4) : [],
       });
+      sessions.delete(id);
       sessions.set(id, history);
+      if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value!);
       return send(200, { sessionId: id, ...turn });
     }
     // 画面の黄色い帯に出す、現場の予報と注意報・警報。Claude を使わないので API キーなしでも動く。
@@ -60,7 +75,7 @@ createServer(async (req, res) => {
       const end = Number(q.get("end") ?? 17);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(start >= 0 && end <= 23 && start <= end)) return send(400, { error: "日付と時間を確かめてください。" });
       const place = q.get("place");
-      const site = place ? await geocode(place) : validSite({ lat: Number(q.get("lat")), lon: Number(q.get("lon")) });
+      const site = place ? await geocode(place) : validSite({ lat: q.get("lat"), lon: q.get("lon") });
       if (!site) return send(400, { error: "現場の位置が分かりませんでした。" });
       return send(200, { site, ...(await siteConditions(site, date, start, end)) });
     }
@@ -68,12 +83,14 @@ createServer(async (req, res) => {
       const b = await readJson(req);
       const fields = ["work", "what_happened", "cause", "countermeasure"] as const;
       if (fields.some((f) => typeof b[f] !== "string" || !b[f].trim())) return send(400, { error: "4 つの欄をすべて書いてください。" });
+      if (fields.some((f) => b[f].length > MAX_FIELD)) return send(400, { error: `1 つの欄は ${MAX_FIELD} 字までにしてください。` });
       const date = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
       addNearMiss({ date, work: b.work, what_happened: b.what_happened, cause: b.cause, countermeasure: b.countermeasure });
       return send(200, { ok: true });
     }
     if (req.method === "GET") {
-      const path = req.url === "/" ? "index.html" : (req.url ?? "").slice(1);
+      const pathname = (req.url ?? "").split("?")[0];
+      const path = pathname === "/" ? "index.html" : pathname.slice(1);
       const ext = path.slice(path.lastIndexOf("."));
       if (!/^[a-z-]+\.(html|js|css)$/.test(path)) return send(404, { error: "見つかりません" });
       res.writeHead(200, { "content-type": TYPES[ext] });
@@ -81,7 +98,9 @@ createServer(async (req, res) => {
     }
     send(404, { error: "見つかりません" });
   } catch (err) {
+    if (err instanceof BadRequest || err instanceof SyntaxError) return send(400, { error: err instanceof BadRequest ? err.message : "送る内容が読めませんでした。" });
     console.error(err);
     send(500, { error: "うまく動きませんでした。少し待ってもう一度お願いします。" });
   }
-}).listen(PORT, () => console.log(`http://localhost:${PORT}`));
+// 手元の端末からだけ使う。現場の Wi-Fi のほかの端末からは届かない。
+}).listen(PORT, "127.0.0.1", () => console.log(`http://localhost:${PORT}`));

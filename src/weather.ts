@@ -38,26 +38,44 @@ type JmaArea = { parent: string; name: string; enName: string };
 let areaTable: { class10s: Record<string, JmaArea>; class15s: Record<string, JmaArea>; class20s: Record<string, JmaArea> } | null = null;
 type JmaReport = {
   reportDatetime: string;
-  warning?: { class20Items?: { areaCode: string; kinds: { code?: string; status: string }[] }[] };
+  warning?: { class20Items?: { areaCode: string; kinds?: { code?: string; status: string }[] }[] };
 };
 
 // 国土地理院の逆ジオコーダーで市区町村コードを引き、気象庁の地域コードに直して注意報・警報を読む。
-// 日本の外、または読めなかったときは null (予報だけで判断する)。
+// 日本の外なら null (予報だけで判断する)。日本の中で読めなかったときは unavailable で返し、画面で「確かめられなかった」と出す。
 async function jmaWarnings(site: Site) {
   const geo = await fetch(
     `https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=${site.lat}&lon=${site.lon}`,
   ).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const muni: string | undefined = geo?.results?.muniCd;
+  // 国土地理院に届かなかったときは、日本の外と区別できないので「確かめられなかった」にする。
+  if (!geo) return { unavailable: true as const };
+  const muni: string | undefined = geo.results?.muniCd;
   if (!muni) return null;
+  return readJmaWarnings(muni).catch((err) => {
+    console.error(err);
+    return { unavailable: true as const };
+  });
+}
 
+async function readJmaWarnings(muni: string) {
   areaTable ??= await fetch("https://www.jma.go.jp/bosai/common/const/area.json").then((r) => r.json());
   // ふつうは市区町村コード + "00"。区域を分けている市町村は同じ頭の地域をまとめて見る。
-  // 政令市は区のコードが返るので、見つからなければ市のコード (末尾 0) で探す。
+  // 政令市は区のコード (市のコードのすぐ上・3 桁目が 1) が返るので、10 ずつ下げて市のコードを探す。
+  // 例: 大阪市北区 27127 → 27120 → 27110 → 27100 (大阪市)、浜松市天竜区 22140 → 22130 (浜松市)。
   const all = Object.keys(areaTable!.class20s);
+  const has = (p: string) => all.some((c) => c.startsWith(p));
   let prefix = muni.padStart(5, "0");
-  if (!all.some((c) => c.startsWith(prefix))) prefix = prefix.slice(0, 4) + "0";
+  if (!has(prefix) && prefix[2] === "1") {
+    for (let n = Math.floor(Number(prefix.slice(3)) / 10) * 10; n >= 0; n -= 10) {
+      const city = prefix.slice(0, 3) + String(n).padStart(2, "0");
+      if (has(city)) {
+        prefix = city;
+        break;
+      }
+    }
+  }
   const codes = all.filter((c) => c.startsWith(prefix));
-  if (codes.length === 0) return null;
+  if (codes.length === 0) throw new Error(`気象庁の地域コードが見つかりません (${muni})`);
   const city = areaTable!.class20s[codes.includes(prefix + "00") ? prefix + "00" : codes[0]];
   const office = areaTable!.class10s[areaTable!.class15s[city.parent].parent].parent;
 
@@ -67,13 +85,13 @@ async function jmaWarnings(site: Site) {
   for (const report of reports) {
     for (const item of report.warning?.class20Items ?? []) {
       if (!codes.includes(item.areaCode)) continue;
-      for (const k of item.kinds) {
+      for (const k of item.kinds ?? []) {
         if (k.code && k.status !== "解除" && JMA_WARNINGS[k.code]) active.set(k.code, JMA_WARNINGS[k.code]);
       }
     }
   }
   const issued_at = reports.map((r) => r.reportDatetime).sort().at(-1) ?? "";
-  return { area: city.name, area_en: city.enName, issued_at, active: [...active.values()] };
+  return { unavailable: false as const, area: city.name, area_en: city.enName, issued_at, active: [...active.values()] };
 }
 
 export async function siteConditions(site: Site, date: string, startHour: number, endHour: number) {
@@ -115,7 +133,7 @@ export async function siteConditions(site: Site, date: string, startHour: number
     thunder_hours: hours.filter((x) => x.thunder).map((x) => x.hour),
     max_gust_ms: Math.max(...hours.map((x) => x.gust_ms)),
     max_temp_c: Math.max(...hours.map((x) => x.temp_c)),
-    official_warnings: await jmaWarnings(site).catch(() => null),
+    official_warnings: await jmaWarnings(site),
     hours,
   };
 }

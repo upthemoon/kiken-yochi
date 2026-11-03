@@ -19,7 +19,9 @@ const TEXT = {
     gustLine: (g) => `一番強い突風 ${g}m/s`,
     upperNote: "鉄塔の上や尾根は、予報 (地上 10m) より強いことが多い。",
     decide: "中止・続行の判断は現場の責任者が行います。",
-    source: (area, at) => `予報: Open-Meteo${area ? ` / 注意報・警報: 気象庁 ${area} (${at} 発表)` : " / 気象庁の注意報・警報は日本国内のみ"}`,
+    source: (area, at) => `予報: Open-Meteo${area ? ` / 注意報・警報: 気象庁 ${area} (${at} 発表)` : area === null ? "" : " / 気象庁の注意報・警報は日本国内のみ"}`,
+    warnUnknown: "気象庁の注意報・警報を確かめられませんでした",
+    warnUnknownLine: "注意報・警報は、気象庁の発表を責任者が確かめてください。",
     hourUnit: (h) => `${h}時`,
     thinking: "職長が考えています… (天気と過去のヒヤリハットも調べます)",
     sendFail: "送れませんでした。",
@@ -53,7 +55,9 @@ const TEXT = {
     gustLine: (g) => `Strongest gust ${g} m/s`,
     upperNote: "Tower tops and ridges usually see stronger wind than the 10 m forecast.",
     decide: "The person in charge makes the final stop / go call.",
-    source: (area, at) => `Forecast: Open-Meteo${area ? ` / Warnings: JMA ${area} (issued ${at})` : " / JMA warnings cover Japan only"}`,
+    source: (area, at) => `Forecast: Open-Meteo${area ? ` / Warnings: JMA ${area} (issued ${at})` : area === null ? "" : " / JMA warnings cover Japan only"}`,
+    warnUnknown: "Couldn't check JMA weather warnings",
+    warnUnknownLine: "The person in charge should check the JMA warnings directly.",
     hourUnit: (h) => `${h}:00`,
     thinking: "The foreman is thinking… (checking weather and past near misses)",
     sendFail: "Couldn't send.",
@@ -99,7 +103,7 @@ const state = {
 };
 
 function readCrewLangs() {
-  try { return (JSON.parse(localStorage.getItem("ky-crew") ?? "[]")).filter((c) => c in CREW); } catch { return []; }
+  try { return (JSON.parse(localStorage.getItem("ky-crew") ?? "[]")).filter((c) => Object.hasOwn(CREW, c)); } catch { return []; }
 }
 
 function readLang() {
@@ -108,7 +112,7 @@ function readLang() {
 const t = () => TEXT[state.lang];
 
 function esc(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
 function applyLang() {
@@ -187,24 +191,28 @@ async function loadConditions(query) {
 function renderBanner() {
   const T = t(), c = state.conditions;
   const warnings = c.official_warnings?.active ?? [];
+  // 確かめられなかったときは「出ていない」と見せず、注意の色で出す。
+  const unknown = c.official_warnings?.unavailable === true;
   const stop = c.hours_over_stop_rule, thunder = c.thunder_hours;
-  const alert = warnings.length > 0 || stop.length > 0 || thunder.length > 0;
+  const alert = warnings.length > 0 || stop.length > 0 || thunder.length > 0 || unknown;
   const hours = (hs) => hs.map(T.hourUnit).join("・");
 
   let head = T.calm;
   if (stop.length) head = T.stopFrom(stop[0], Math.max(...c.hours.filter((h) => stop.includes(h.hour)).map((h) => h.wind_ms)).toFixed(1));
   else if (thunder.length) head = T.thunderAt(thunder[0]);
   else if (warnings.length) head = T.warnHead;
+  else if (unknown) head = T.warnUnknown;
 
   const lines = [];
   if (stop.length) lines.push(T.stopLine(hours(stop)));
   if (thunder.length) lines.push(T.thunderLine(hours(thunder)));
+  if (unknown) lines.push(T.warnUnknownLine);
   lines.push(T.gustLine(c.max_gust_ms.toFixed(1)));
   lines.push(T.upperNote);
 
   const ow = c.official_warnings;
-  const area = ow ? (state.lang === "en" ? ow.area_en : ow.area) : "";
-  const at = ow ? new Date(ow.issued_at).toLocaleString(state.lang === "en" ? "en-US" : "ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  const area = ow?.area ? (state.lang === "en" ? ow.area_en : ow.area) : "";
+  const at = ow?.area ? new Date(ow.issued_at).toLocaleString(state.lang === "en" ? "en-US" : "ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 
   const b = $("banner");
   b.className = alert ? "banner alert" : "banner";
@@ -214,7 +222,7 @@ function renderBanner() {
       ${warnings.length ? `<div class="warn-tags">${warnings.map((w) => `<span>${esc(w[state.lang])}</span>`).join("")}</div>` : ""}
       <ul>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
       <span>${esc(T.decide)}</span>
-      <span class="src">${esc(T.source(area, at))}</span>
+      <span class="src">${esc(T.source(unknown ? null : area, at))}</span>
     </div>`;
   b.hidden = false;
 }
@@ -387,7 +395,7 @@ function speak(text, lang) {
 
 // 作業員の母語の版。言語ごとにタブで切り替え、印刷では全部を並べる。
 function crewSection(s) {
-  const versions = (s.crew_versions ?? []).filter((v) => v.lang in CREW);
+  const versions = (s.crew_versions ?? []).filter((v) => Object.hasOwn(CREW, v.lang));
   if (!versions.length) return "";
   const tabs = versions
     .map((v, i) => `<button type="button" role="tab" class="crew-tab" data-crew-tab="${v.lang}" aria-selected="${i === 0}" lang="${v.lang}">${esc(CREW[v.lang].name)}</button>`)
