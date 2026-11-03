@@ -74,7 +74,8 @@ export const KySheet = z.object({
 });
 export type KySheet = z.infer<typeof KySheet>;
 
-export type Context = { site: Site | null; workType: WorkType; lang: "ja" | "en"; crewLangs: string[] };
+export type Plan = { date: string; start: number; end: number };
+export type Context = { site: Site | null; workType: WorkType; lang: "ja" | "en"; crewLangs: string[]; plan: Plan | null };
 export type Turn = { reply: string; sheet: KySheet | null };
 
 // 会話はサーバー側で、送ったとおりの形のまま持つ (考えた跡のブロックも含めて追記するだけ)。
@@ -123,6 +124,7 @@ export async function runTurn(
   });
 
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+  const when = ctx.plan ? `作業の予定 ${ctx.plan.date} ${ctx.plan.start}〜${ctx.plan.end}時 (画面で選んだもの)` : "作業の予定は未入力";
   const where = ctx.site ? `現場の位置 ${ctx.site.lat.toFixed(4)}, ${ctx.site.lon.toFixed(4)} (GPS)` : "現場の位置は未取得";
   const runner = client.beta.messages.toolRunner({
     model: "claude-opus-5-5",
@@ -137,7 +139,7 @@ export async function runTurn(
       ...history,
       {
         role: "user",
-        content: `(今日は ${today}・工種: ${WORK_TYPE_JA[ctx.workType]}・${where}・言語: ${ctx.lang}・作業員の言語: ${ctx.crewLangs.length ? ctx.crewLangs.join(", ") : "なし"})\n${userText}`,
+        content: `(今日は ${today}・工種: ${WORK_TYPE_JA[ctx.workType]}・${where}・${when}・言語: ${ctx.lang}・作業員の言語: ${ctx.crewLangs.length ? ctx.crewLangs.join(", ") : "なし"})\n${userText}`,
       },
     ],
   });

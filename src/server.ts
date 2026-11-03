@@ -32,6 +32,13 @@ function validSite(v: any) {
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
 }
 
+// 画面で選んだ作業日と時間。形が違えば渡さない (Claude が聞き直す)。
+function validPlan(date: unknown, start: unknown, end: unknown) {
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const s = Number(start), e = Number(end);
+  return Number.isInteger(s) && Number.isInteger(e) && 0 <= s && s <= e && e <= 23 ? { date, start: s, end: e } : null;
+}
+
 class BadRequest extends Error {}
 
 // 画面から送る JSON だけを受け付ける。ほかのサイトのページからの送信 (text/plain) は断る。
@@ -53,7 +60,7 @@ createServer(async (req, res) => {
   try {
     if (req.method === "POST" && req.url === "/api/ky") {
       if (!process.env.ANTHROPIC_API_KEY) return send(503, { error: "ANTHROPIC_API_KEY が設定されていません。.env.example を写して .env を作り、キーを入れてから起動し直してください。" });
-      const { sessionId, text, site, workType, lang, crewLangs } = await readJson(req);
+      const { sessionId, text, site, workType, lang, crewLangs, date, start, end } = await readJson(req);
       if (typeof text !== "string" || !text.trim()) return send(400, { error: "作業の内容を入れてください。" });
       const id = typeof sessionId === "string" && sessions.has(sessionId) ? sessionId : randomUUID();
       const { turn, history } = await runTurn(sessions.get(id) ?? [], text.trim(), {
@@ -61,6 +68,7 @@ createServer(async (req, res) => {
         workType: WORK_TYPES.includes(workType) ? (workType as WorkType) : "other",
         lang: lang === "en" ? "en" : "ja",
         crewLangs: Array.isArray(crewLangs) ? crewLangs.filter((c) => CREW_LANGS.includes(c)).slice(0, 4) : [],
+        plan: validPlan(date, start, end),
       });
       sessions.delete(id);
       sessions.set(id, history);

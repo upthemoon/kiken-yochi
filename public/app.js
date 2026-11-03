@@ -264,7 +264,9 @@ function say(cls, text) {
   const li = document.createElement("li");
   li.className = cls;
   if (cls === "foreman") li.dataset.badge = t().badge;
-  li.textContent = text;
+  // 職長の返事は太字 (**…**) だけを効かせる。ほかは文字のまま出す。
+  if (cls === "foreman") li.innerHTML = esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  else li.textContent = text;
   $("log").append(li);
   li.scrollIntoView({ block: "end", behavior: "smooth" });
   return li;
@@ -284,7 +286,7 @@ $("ask").addEventListener("submit", async (e) => {
     const res = await fetch("/api/ky", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang, crewLangs: state.crewLangs }),
+      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang, crewLangs: state.crewLangs, date: $("date").value, start: $("start").value, end: $("end").value }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
