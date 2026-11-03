@@ -36,7 +36,8 @@ const SYSTEM = `あなたは送電線工事を 30 年やってきた職長です
 - 用紙は KYT の 4 ラウンドの形にする: どんな危険があるか (1R)、とくに大事な危険 (2R)、どうするか (3R)、私たちはこうする = 全員で指差し唱和する一言 (4R)。
 - 朝礼で確かめる項目 (体調、保護具の点検、その日の作業に合わせた項目) も用紙に入れる。
 - 中止や続行の最後の判断は責任者が行う。あなたは判断を代わりにしない。
-- 返事と用紙は、指定された言語 (ja なら日本語、en なら英語) で書く。英語のときは、北米でいう job briefing / tailboard の言い方に合わせる。`;
+- 返事と用紙は、指定された言語 (ja なら日本語、en なら英語) で書く。英語のときは、北米でいう job briefing / tailboard の言い方に合わせる。
+- 作業員の言語が指定されていれば、用紙の crew_versions にその言語ごとの版を入れる。現場の道具や部位の名前は、作業員が日本の現場で聞く日本語の呼び名も括弧で添える (例: 安全帯 / ハーネス)。訳は短く、命令でなく「〜します」の形にする。`;
 
 export const KySheet = z.object({
   work: z.string().describe("今日の作業 (一文)"),
@@ -58,10 +59,20 @@ export const KySheet = z.object({
   past_near_misses: z.array(z.string()).describe("今日の作業に関係する過去のヒヤリハット (なければ空)"),
   team_motto: z.string().describe("全員で指差し唱和する一言。例: 「二丁掛け、よし!」"),
   plain_reading: z.string().describe("読み上げ用のやさしい版。日本語ならやさしい日本語、英語なら plain English"),
+  crew_versions: z
+    .array(
+      z.object({
+        lang: z.string().describe("作業員の言語コード (指定されたもの)"),
+        hazards: z.array(z.object({ hazard: z.string(), countermeasure: z.string() })).describe("hazards と同じ順・同じ数を、その言語の短い文で"),
+        team_motto: z.string().describe("指差し唱和の一言をその言語で。日本語の唱和も一緒に覚えられるよう、元の日本語を括弧で添える"),
+        plain_reading: z.string().describe("読み上げ用のやさしい版をその言語で"),
+      }),
+    )
+    .describe("作業員の言語ごとの版。指定がなければ空"),
 });
 export type KySheet = z.infer<typeof KySheet>;
 
-export type Context = { site: Site | null; workType: WorkType; lang: "ja" | "en" };
+export type Context = { site: Site | null; workType: WorkType; lang: "ja" | "en"; crewLangs: string[] };
 export type Turn = { reply: string; sheet: KySheet | null };
 
 // 会話はサーバー側で、送ったとおりの形のまま持つ (考えた跡のブロックも含めて追記するだけ)。
@@ -124,7 +135,7 @@ export async function runTurn(
       ...history,
       {
         role: "user",
-        content: `(今日は ${today}・工種: ${WORK_TYPE_JA[ctx.workType]}・${where}・言語: ${ctx.lang})\n${userText}`,
+        content: `(今日は ${today}・工種: ${WORK_TYPE_JA[ctx.workType]}・${where}・言語: ${ctx.lang}・作業員の言語: ${ctx.crewLangs.length ? ctx.crewLangs.join(", ") : "なし"})\n${userText}`,
       },
     ],
   });

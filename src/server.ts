@@ -16,6 +16,9 @@ const TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
 };
 
+// 作業員の言語として受け付けるもの (public/i18n.js の CREW と合わせる)
+const CREW_LANGS = ["vi", "id", "fil", "zh", "my", "pt", "ne", "km"];
+
 const sessions = new Map<string, Anthropic.Beta.BetaMessageParam[]>();
 
 function validSite(v: any) {
@@ -37,13 +40,14 @@ createServer(async (req, res) => {
   };
   try {
     if (req.method === "POST" && req.url === "/api/ky") {
-      const { sessionId, text, site, workType, lang } = await readJson(req);
+      const { sessionId, text, site, workType, lang, crewLangs } = await readJson(req);
       if (typeof text !== "string" || !text.trim()) return send(400, { error: "作業の内容を入れてください。" });
       const id = typeof sessionId === "string" && sessions.has(sessionId) ? sessionId : randomUUID();
       const { turn, history } = await runTurn(sessions.get(id) ?? [], text.trim(), {
         site: validSite(site),
         workType: WORK_TYPES.includes(workType) ? (workType as WorkType) : "other",
         lang: lang === "en" ? "en" : "ja",
+        crewLangs: Array.isArray(crewLangs) ? crewLangs.filter((c) => CREW_LANGS.includes(c)).slice(0, 4) : [],
       });
       sessions.set(id, history);
       return send(200, { sessionId: id, ...turn });

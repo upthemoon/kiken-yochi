@@ -15,6 +15,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -145,3 +146,21 @@ button { cursor: pointer; }
 .sign { display: none; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #111; }
 .sign span { height: 44px; border-right: 1px solid #111; }
 .sign span:last-child { border-right: 0; }
+
+/* 作業員の母語の版 */
+.crew { background: var(--card); border: 2px solid var(--green); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.crew-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.crew-tab { min-height: 40px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--line-strong); background: var(--ground); font-size: 14px; }
+.crew-tab[aria-selected="true"] { background: var(--green); border-color: var(--green); color: #FFFFFF; font-weight: 700; }
+.crew-panel { display: flex; flex-direction: column; gap: 8px; }
+.crew-panel h3 { margin: 0; font-size: 16px; }
+.crew-panel ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.crew-panel li { display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.crew-motto { margin: 0; border: 3px solid var(--ink); border-radius: 10px; padding: 10px; text-align: center; font-weight: 700; font-size: 18px; display: flex; flex-direction: column; gap: 2px; }
+.crew-motto span { font-size: 12px; font-weight: 400; color: var(--muted); }
+.crew-plain { margin: 0; font-size: 16px; line-height: 1.8; }
+@media print {
+  .crew-tabs, .crew-panel button { display: none !important; }
+  .crew-panel[hidden] { display: flex !important; }
+  .crew-panel { break-inside: avoid; border-top: 1px solid #111; padding-top: 8px; }
+}

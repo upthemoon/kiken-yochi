@@ -4,7 +4,7 @@ const TEXT = {
   ja: {
     appName: "朝の KY", reset: "最初からやり直す", progress: "進み具合",
     stepTalk: "聞き取り", stepSheet: "用紙", stepEvening: "夕方の記録",
-    workType: "今日の工種", site: "現場の位置", useGps: "今いる場所を使う", placeLabel: "地名で探す",
+    workType: "今日の工種", crewLangs: "作業員の言語 (用紙を母語でも出す・4 つまで)", site: "現場の位置", useGps: "今いる場所を使う", placeLabel: "地名で探す",
     placePh: "または地名 (例: 飯田市)", search: "探す", date: "作業日", hours: "時間",
     answer: "職長に答える", composerPh: "今日の作業を話すか、打ってください", speak: "声で話す", send: "送る",
     types: { assembly: "組立", dismantling: "解体", foundation: "基礎", stringing: "架線 (張線)", other: "その他" },
@@ -38,7 +38,7 @@ const TEXT = {
   en: {
     appName: "Morning KY", reset: "Start over", progress: "Progress",
     stepTalk: "Briefing", stepSheet: "Sheet", stepEvening: "End of day",
-    workType: "Today's work", site: "Job site", useGps: "Use my location", placeLabel: "Search by place",
+    workType: "Today's work", crewLangs: "Crew languages (sheet in their own language, up to 4)", site: "Job site", useGps: "Use my location", placeLabel: "Search by place",
     placePh: "or a place name", search: "Search", date: "Date", hours: "Hours",
     answer: "Reply to the foreman", composerPh: "Describe today's work", speak: "Speak", send: "Send",
     types: { assembly: "Tower erection", dismantling: "Dismantling", foundation: "Foundation", stringing: "Stringing", other: "Other" },
@@ -71,6 +71,21 @@ const TEXT = {
   },
 };
 
+// 作業員の言語。画面の操作は責任者が日本語か英語で行い、用紙だけを作業員の母語でも出す。
+// 並びは建設業の外国人労働者の国籍の多い順 (厚労省「外国人雇用状況」令和7年10月末:
+// ベトナム 36.1%・インドネシア 25.0%・フィリピン 11.0%・中国 7.6%・ミャンマー 4.8%・ブラジル 2.3%・ネパール 1.7%)。
+// カンボジアは特定技能 (建設) で 5 番目に多いので入れる。見出しの訳は母語話者の確認前の下書き。
+const CREW = {
+  vi: { name: "Tiếng Việt", speech: "vi-VN", title: "Nguy hiểm hôm nay", act: "Chúng ta sẽ làm", motto: "Cùng hô to", read: "Đọc to" },
+  id: { name: "Bahasa Indonesia", speech: "id-ID", title: "Bahaya hari ini", act: "Yang kita lakukan", motto: "Seruan bersama", read: "Bacakan" },
+  fil: { name: "Filipino", speech: "fil-PH", title: "Mga panganib ngayon", act: "Gagawin natin", motto: "Sabay-sabay na sigaw", read: "Basahin nang malakas" },
+  zh: { name: "中文（简体）", speech: "zh-CN", title: "今天的危险", act: "我们这样做", motto: "一起指认呼唤", read: "朗读" },
+  my: { name: "မြန်မာ", speech: "my-MM", title: "ယနေ့ အန္တရာယ်များ", act: "ကျွန်ုပ်တို့ လုပ်ဆောင်မည်", motto: "အတူတကွ အော်ဆိုရန်", read: "အသံထွက် ဖတ်ရန်" },
+  pt: { name: "Português (Brasil)", speech: "pt-BR", title: "Perigos de hoje", act: "O que vamos fazer", motto: "Grito em conjunto", read: "Ler em voz alta" },
+  ne: { name: "नेपाली", speech: "ne-NP", title: "आजका खतराहरू", act: "हामी यसो गर्छौं", motto: "सँगै भनौं", read: "पढेर सुनाउनुहोस्" },
+  km: { name: "ខ្មែរ", speech: "km-KH", title: "គ្រោះថ្នាក់ថ្ងៃនេះ", act: "យើងនឹងធ្វើ", motto: "ស្រែកជាមួយគ្នា", read: "អានឮៗ" },
+};
+
 const $ = (id) => document.getElementById(id);
 const state = {
   lang: readLang(),
@@ -80,7 +95,12 @@ const state = {
   sessionId: null,
   sheet: null,
   step: "talk",
+  crewLangs: readCrewLangs(),
 };
+
+function readCrewLangs() {
+  try { return (JSON.parse(localStorage.getItem("ky-crew") ?? "[]")).filter((c) => c in CREW); } catch { return []; }
+}
 
 function readLang() {
   try { return localStorage.getItem("ky-lang") === "en" ? "en" : "ja"; } catch { return "ja"; }
@@ -101,8 +121,15 @@ function applyLang() {
   document.querySelectorAll("[data-t-label]").forEach((el) => el.setAttribute("aria-label", T[el.dataset.tLabel]));
   $("today").textContent = T.dateFmt(new Date());
   renderTypes();
+  renderCrewLangs();
   if (state.conditions) renderBanner();
   if (state.sheet) renderSheet();
+}
+
+function renderCrewLangs() {
+  $("crew-langs").innerHTML = Object.entries(CREW)
+    .map(([k, c]) => `<label><input type="checkbox" value="${k}" ${state.crewLangs.includes(k) ? "checked" : ""}><span lang="${k}">${esc(c.name)}</span></label>`)
+    .join("");
 }
 
 function renderTypes() {
@@ -217,6 +244,13 @@ $("place-form").addEventListener("submit", (e) => {
 
 $("types").addEventListener("change", (e) => { state.workType = e.target.value; });
 
+$("crew-langs").addEventListener("change", (e) => {
+  const picked = [...$("crew-langs").querySelectorAll("input:checked")].map((i) => i.value);
+  if (picked.length > 4) { e.target.checked = false; return; }
+  state.crewLangs = picked;
+  try { localStorage.setItem("ky-crew", JSON.stringify(picked)); } catch {}
+});
+
 // ---- 職長との聞き取り ----
 function say(cls, text) {
   const li = document.createElement("li");
@@ -242,7 +276,7 @@ $("ask").addEventListener("submit", async (e) => {
     const res = await fetch("/api/ky", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang }),
+      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang, crewLangs: state.crewLangs }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
@@ -299,6 +333,7 @@ function renderSheet() {
     ${past}
     <div class="motto">${esc(s.team_motto)}</div>
     <section class="plain"><h3>${esc(T.plainTitle)}</h3>${esc(s.plain_reading)}</section>
+    ${crewSection(s)}
     <div class="sign" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
     <p class="final-note">${esc(T.decide)}</p>
     <div class="sheet-actions">
@@ -309,12 +344,20 @@ function renderSheet() {
   $("sheet").hidden = false;
 
   $("print").addEventListener("click", () => window.print());
+  $("sheet").querySelectorAll("[data-read-crew]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const v = s.crew_versions.find((x) => x.lang === b.dataset.readCrew);
+      if (v) speak(`${v.plain_reading} ${v.team_motto}`, CREW[v.lang].speech);
+    }),
+  );
+  $("sheet").querySelectorAll("[data-crew-tab]").forEach((b) =>
+    b.addEventListener("click", () => {
+      $("sheet").querySelectorAll("[data-crew-tab]").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+      $("sheet").querySelectorAll("[data-crew-panel]").forEach((p) => { p.hidden = p.dataset.crewPanel !== b.dataset.crewTab; });
+    }),
+  );
   $("read").addEventListener("click", () => {
-    if (!("speechSynthesis" in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(`${s.plain_reading} ${s.team_motto}`);
-    u.lang = T.speech;
-    speechSynthesis.speak(u);
+    speak(`${s.plain_reading} ${s.team_motto}`, T.speech);
   });
   $("to-evening").addEventListener("click", () => {
     $("evening").hidden = false;
@@ -322,6 +365,49 @@ function renderSheet() {
     setStep("evening");
     $("evening").scrollIntoView({ block: "start", behavior: "smooth" });
   });
+}
+
+// 端末にその言語の声がなければ、読み上げボタンを出さず文字だけにする。
+function hasVoice(lang) {
+  if (!("speechSynthesis" in window)) return false;
+  return speechSynthesis.getVoices().some((v) => v.lang.replace("_", "-").startsWith(lang.split("-")[0]));
+}
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (state.sheet) renderSheet(); };
+
+function speak(text, lang) {
+  if (!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang;
+  // その言語の声が端末にあれば使う。なければ端末の既定の声で読む。
+  const voice = speechSynthesis.getVoices().find((v) => v.lang.replace("_", "-").startsWith(lang.split("-")[0]));
+  if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+
+// 作業員の母語の版。言語ごとにタブで切り替え、印刷では全部を並べる。
+function crewSection(s) {
+  const versions = (s.crew_versions ?? []).filter((v) => v.lang in CREW);
+  if (!versions.length) return "";
+  const tabs = versions
+    .map((v, i) => `<button type="button" role="tab" class="crew-tab" data-crew-tab="${v.lang}" aria-selected="${i === 0}" lang="${v.lang}">${esc(CREW[v.lang].name)}</button>`)
+    .join("");
+  const panels = versions
+    .map((v, i) => {
+      const c = CREW[v.lang];
+      const items = v.hazards
+        .map((h, j) => `<li><strong>${j + 1}. ${esc(h.hazard)}</strong><span>${esc(c.act)}: ${esc(h.countermeasure)}</span></li>`)
+        .join("");
+      return `<div class="crew-panel" role="tabpanel" data-crew-panel="${v.lang}" lang="${v.lang}" ${i === 0 ? "" : "hidden"}>
+          <h3>${esc(c.title)}</h3>
+          <ol>${items}</ol>
+          <p class="crew-motto"><span>${esc(c.motto)}</span>${esc(v.team_motto)}</p>
+          <p class="crew-plain">${esc(v.plain_reading)}</p>
+          ${hasVoice(c.speech) ? `<button type="button" class="secondary" data-read-crew="${v.lang}">${SPEAK_ICON}${esc(c.read)}</button>` : ""}
+        </div>`;
+    })
+    .join("");
+  return `<section class="crew"><div class="crew-tabs" role="tablist">${tabs}</div>${panels}</section>`;
 }
 
 // ---- 夕方のヒヤリハット ----
