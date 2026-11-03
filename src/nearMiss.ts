@@ -22,7 +22,7 @@ function load(): NearMiss[] {
 export function findNearMisses(keywords: string[]): NearMiss[] {
   return load()
     .filter((n) => keywords.some((k) => `${n.work} ${n.what_happened} ${n.cause}`.includes(k)))
-    .slice(0, 5);
+    .slice(-5); // 記録は古い順に並ぶので、新しい 5 件を渡す
 }
 
 export function addNearMiss(entry: NearMiss): void {
