@@ -1,43 +1,88 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>朝の KY</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>朝の KY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Zen+Kaku+Gothic+New:wght@700;900&display=swap">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="app">
   <header class="top">
-    <h1>朝の KY</h1>
-    <p class="lead">今日の作業を話してください。職長のように聞き返して、危険予知の用紙を作ります。</p>
+    <div class="brand">
+      <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#0B7A4B"></rect><path d="M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z" fill="#FFFFFF"></path></svg>
+      <div class="brand-text">
+        <span class="brand-name" data-t="appName">朝の KY</span>
+        <span class="brand-date" id="today"></span>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button type="button" class="chip-btn" id="lang" aria-label="Language">EN</button>
+      <button type="button" class="icon-btn" id="reset" data-t-label="reset"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg></button>
+    </div>
   </header>
 
-  <main class="layout">
-    <section class="chat" aria-label="聞き取り">
-      <ol id="log" class="log"></ol>
-      <form id="ask" class="ask">
-        <label for="text" class="sr">今日の作業</label>
-        <textarea id="text" rows="3" placeholder="例: 今日は山の上の鉄塔で上部の部材交換。高さ 50m、4 人、うち 1 人は入って 2 か月。"></textarea>
-        <button id="send" type="submit">送る</button>
-      </form>
+  <ol class="steps" data-t-label="progress">
+    <li data-step="talk"><span class="bar"></span><span data-t="stepTalk">聞き取り</span></li>
+    <li data-step="sheet"><span class="bar"></span><span data-t="stepSheet">用紙</span></li>
+    <li data-step="evening"><span class="bar"></span><span data-t="stepEvening">夕方の記録</span></li>
+  </ol>
+
+  <main class="body" id="body">
+    <section class="setup" id="setup">
+      <fieldset class="types">
+        <legend data-t="workType">今日の工種</legend>
+        <div class="type-row" id="types"></div>
+      </fieldset>
+
+      <div class="site">
+        <span class="label" data-t="site">現場の位置</span>
+        <div class="site-row">
+          <button type="button" class="ghost-btn" id="gps"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path><circle cx="12" cy="12" r="7"></circle></svg><span data-t="useGps">今いる場所を使う</span></button>
+          <form class="place-form" id="place-form">
+            <label for="place" class="sr" data-t="placeLabel">地名で探す</label>
+            <input id="place" type="text" autocomplete="off" data-t-ph="placePh" placeholder="または地名 (例: 飯田市)">
+            <button type="submit" class="ghost-btn" data-t="search">探す</button>
+          </form>
+        </div>
+        <div class="when">
+          <label for="date" data-t="date">作業日</label>
+          <input id="date" type="date">
+          <label for="start" data-t="hours">時間</label>
+          <select id="start"></select><span>–</span><select id="end"></select>
+        </div>
+      </div>
     </section>
 
-    <section id="sheet" class="sheet" aria-label="KY 用紙" hidden></section>
+    <section class="banner" id="banner" aria-live="polite" hidden></section>
+
+    <ol class="log" id="log" aria-live="polite"></ol>
+
+    <section class="sheet" id="sheet" hidden></section>
+
+    <section class="evening" id="evening" hidden>
+      <h2 data-t="eveningTitle">おつかれさまでした。今日、ヒヤッとしたことは？</h2>
+      <p class="muted" data-t="eveningLead">小さなことでも残すと、次に同じ作業をする朝の用紙に入ります。</p>
+      <form id="near" class="near">
+        <label for="n-work" data-t="nWork">作業</label><input id="n-work" name="work" required>
+        <label for="n-what" data-t="nWhat">何があったか</label><textarea id="n-what" name="what_happened" rows="2" required></textarea>
+        <label for="n-cause" data-t="nCause">なぜ起きたか</label><textarea id="n-cause" name="cause" rows="2" required></textarea>
+        <label for="n-next" data-t="nNext">次はこうする</label><textarea id="n-next" name="countermeasure" rows="2" required></textarea>
+        <button type="submit" class="primary yellow" data-t="nSave">この内容で記録する</button>
+        <p id="near-msg" class="muted" role="status"></p>
+      </form>
+    </section>
   </main>
 
-  <section class="evening" aria-label="夕方のヒヤリハット">
-    <h2>夕方：今日ヒヤッとしたこと</h2>
-    <form id="near" class="near">
-      <label for="nm-work">作業</label><input id="nm-work" name="work">
-      <label for="nm-what">何があったか</label><textarea id="nm-what" name="what_happened" rows="2"></textarea>
-      <label for="nm-cause">なぜ起きたか</label><textarea id="nm-cause" name="cause" rows="2"></textarea>
-      <label for="nm-measure">次からどうするか</label><textarea id="nm-measure" name="countermeasure" rows="2"></textarea>
-      <button type="submit">記録する</button>
-      <p id="near-msg" class="msg" role="status"></p>
-    </form>
-  </section>
-
-  <footer class="foot">作業の中止・続行の最後の判断は、現場の責任者が行います。</footer>
-  <script src="app.js"></script>
+  <form class="composer" id="ask">
+    <label for="text" class="sr" data-t="answer">職長に答える</label>
+    <textarea id="text" rows="2" data-t-ph="composerPh" placeholder="今日の作業を話すか、打ってください"></textarea>
+    <button type="button" class="round mic" id="mic" data-t-label="speak" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></button>
+    <button type="submit" class="round send" id="send" data-t-label="send"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6"></path></svg></button>
+  </form>
+</div>
+<script src="app.js"></script>
 </body>
 </html>

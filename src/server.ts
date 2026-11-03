@@ -4,7 +4,8 @@ import { createServer, type IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import { runTurn } from "./ky.js";
+import { runTurn, WORK_TYPES, type WorkType } from "./ky.js";
+import { geocode, siteConditions } from "./weather.js";
 import { addNearMiss } from "./nearMiss.js";
 
 const PORT = 8787;
@@ -16,6 +17,12 @@ const TYPES: Record<string, string> = {
 };
 
 const sessions = new Map<string, Anthropic.Beta.BetaMessageParam[]>();
+
+function validSite(v: any) {
+  const lat = Number(v?.lat);
+  const lon = Number(v?.lon);
+  return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+}
 
 async function readJson(req: IncomingMessage): Promise<any> {
   let body = "";
@@ -30,12 +37,28 @@ createServer(async (req, res) => {
   };
   try {
     if (req.method === "POST" && req.url === "/api/ky") {
-      const { sessionId, text } = await readJson(req);
+      const { sessionId, text, site, workType, lang } = await readJson(req);
       if (typeof text !== "string" || !text.trim()) return send(400, { error: "作業の内容を入れてください。" });
       const id = typeof sessionId === "string" && sessions.has(sessionId) ? sessionId : randomUUID();
-      const { turn, history } = await runTurn(sessions.get(id) ?? [], text.trim());
+      const { turn, history } = await runTurn(sessions.get(id) ?? [], text.trim(), {
+        site: validSite(site),
+        workType: WORK_TYPES.includes(workType) ? (workType as WorkType) : "other",
+        lang: lang === "en" ? "en" : "ja",
+      });
       sessions.set(id, history);
       return send(200, { sessionId: id, ...turn });
+    }
+    // 画面の黄色い帯に出す、現場の予報と注意報・警報。Claude を使わないので API キーなしでも動く。
+    if (req.method === "GET" && req.url?.startsWith("/api/conditions?")) {
+      const q = new URL(req.url, "http://x").searchParams;
+      const date = q.get("date") ?? "";
+      const start = Number(q.get("start") ?? 8);
+      const end = Number(q.get("end") ?? 17);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(start >= 0 && end <= 23 && start <= end)) return send(400, { error: "日付と時間を確かめてください。" });
+      const place = q.get("place");
+      const site = place ? await geocode(place) : validSite({ lat: Number(q.get("lat")), lon: Number(q.get("lon")) });
+      if (!site) return send(400, { error: "現場の位置が分かりませんでした。" });
+      return send(200, { site, ...(await siteConditions(site, date, start, end)) });
     }
     if (req.method === "POST" && req.url === "/api/near-miss") {
       const b = await readJson(req);
