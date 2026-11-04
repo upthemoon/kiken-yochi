@@ -74,6 +74,19 @@ export const KySheet = z.object({
 });
 export type KySheet = z.infer<typeof KySheet>;
 
+// 用紙の件数の決まり。tool の説明 (describe) は Claude への頼みでしかないので、守られたかをここで確かめる。
+// 違っていれば null ではなく理由を返し、用紙は作らなかったことにする。
+export function checkSheet(s: KySheet): string | null {
+  if (s.hazards.length < 3 || s.hazards.length > 6) return `hazards は 3〜6 個 (今は ${s.hazards.length} 個)`;
+  const keys = s.hazards.filter((h) => h.key).length;
+  if (keys < 1 || keys > 2) return `key が true の危険は 1〜2 個 (今は ${keys} 個)`;
+  if (s.checks.length < 4 || s.checks.length > 8) return `checks は 4〜8 個 (今は ${s.checks.length} 個)`;
+  for (const v of s.crew_versions) {
+    if (v.hazards.length !== s.hazards.length) return `crew_versions (${v.lang}) の hazards は ${s.hazards.length} 個 (今は ${v.hazards.length} 個)`;
+  }
+  return null;
+}
+
 export type Plan = { date: string; start: number; end: number };
 export type Context = { site: Site | null; workType: WorkType; lang: "ja" | "en"; crewLangs: string[]; plan: Plan | null };
 export type Turn = { reply: string; sheet: KySheet | null };
@@ -85,6 +98,7 @@ export async function runTurn(
   ctx: Context,
 ): Promise<{ turn: Turn; history: Anthropic.Beta.BetaMessageParam[] }> {
   let sheet: KySheet | null = null;
+  let sheetError: string | null = null;
 
   const getSiteConditions = betaZodTool({
     name: "get_site_conditions",
@@ -118,6 +132,8 @@ export async function runTurn(
     inputSchema: KySheet,
     strict: true,
     run: async (input) => {
+      sheetError = checkSheet(input);
+      if (sheetError) return `用紙は作られていません。${sheetError}。直して write_ky_sheet をもう一度呼んでください。`;
       sheet = input;
       return "用紙を作りました。責任者に、確認して全員で読み合わせるよう短く伝えてください。";
     },
@@ -150,11 +166,20 @@ export async function runTurn(
 
   // ふつうに言い終えたとき以外 (答えられない・長すぎて途中で切れた など) は、この回をなかったことにする。
   // 途中で切れた返事を会話に残すと、次の回から API に断られ続けるため。
+  const en = ctx.lang === "en";
   if (final.stop_reason !== "end_turn") {
     const reply =
       final.stop_reason === "refusal"
-        ? ctx.lang === "en" ? "I couldn't answer that. Please try saying it another way." : "この内容には答えられませんでした。言い方を変えてもう一度お願いします。"
-        : ctx.lang === "en" ? "The answer got too long and stopped. Please send it again, a little shorter." : "返事が長くなりすぎて途中で止まりました。少し短くして、もう一度送ってください。";
+        ? en ? "I couldn't answer that. Please try saying it another way." : "この内容には答えられませんでした。言い方を変えてもう一度お願いします。"
+        : final.stop_reason === "max_tokens"
+          ? en ? "The answer got too long and stopped. Please send it again, a little shorter." : "返事が長くなりすぎて途中で止まりました。少し短くして、もう一度送ってください。"
+          : en ? "The answer didn't finish properly. Please send it again." : "返事が最後まで終わりませんでした。もう一度送ってください。";
+    return { turn: { reply, sheet: null }, history };
+  }
+  // 件数の決まりを守れない用紙は出さない。返事だけが「作りました」と言わないよう、返事ごと差し替える。
+  if (sheetError && !sheet) {
+    console.error(`KY 用紙を出しませんでした: ${sheetError}`);
+    const reply = en ? "I couldn't put the sheet together properly. Please send it once more." : "用紙をうまく作れませんでした。もう一度送ってください。";
     return { turn: { reply, sheet: null }, history };
   }
   const reply = final.content

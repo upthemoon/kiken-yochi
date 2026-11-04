@@ -96,6 +96,7 @@ const state = {
   workType: "assembly",
   site: null,
   conditions: null,
+  conditionsFor: null,
   sessionId: null,
   sheet: null,
   step: "talk",
@@ -173,19 +174,46 @@ function bannerMessage(text) {
   b.hidden = false;
 }
 
+// 天気の要求は最後の 1 つだけ生かす。日付・時間・場所を変えたあとに、古い要求の答えが遅れて届いても反映しない。
+let conditionsRequest = 0;
+let conditionsAbort = null;
+
 async function loadConditions(query) {
+  const id = ++conditionsRequest;
+  conditionsAbort?.abort();
+  const abort = (conditionsAbort = new AbortController());
+  // 要求したときの作業日と時間。答えがこれと今の画面の値に合うときだけ使う。
+  const asked = { date: $("date").value, start: $("start").value, end: $("end").value };
+  // 古い結果は、新しい要求の答えが来るまで (失敗したときも) 用紙や帯に残さない。
+  state.conditions = null;
+  state.conditionsFor = null;
+  if (query.place) state.site = null;
   bannerMessage(t().loadingWx);
-  const q = new URLSearchParams({ ...query, date: $("date").value, start: $("start").value, end: $("end").value });
+  const q = new URLSearchParams({ ...query, ...asked });
   try {
-    const res = await fetch(`/api/conditions?${q}`);
+    const res = await fetch(`/api/conditions?${q}`, { signal: abort.signal });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
+    if (id !== conditionsRequest || !conditionsMatch(asked, data.date)) return;
     state.site = data.site;
     state.conditions = data;
+    state.conditionsFor = asked;
     renderBanner();
   } catch (err) {
+    if (id !== conditionsRequest || err.name === "AbortError") return;
     bannerMessage(err.message || t().gpsFail);
   }
+}
+
+// 画面の作業日・時間が、天気を引いたときのものと同じか
+function conditionsMatch(asked, date) {
+  return asked.date === $("date").value && asked.start === $("start").value && asked.end === $("end").value && (date === undefined || date === asked.date);
+}
+
+// 用紙や帯に使ってよい天気 (今の作業日・時間のもの)。合わなければ null。
+function currentConditions() {
+  const f = state.conditionsFor;
+  return state.conditions && f && conditionsMatch(f) ? state.conditions : null;
 }
 
 function renderBanner() {
@@ -286,7 +314,7 @@ $("ask").addEventListener("submit", async (e) => {
     const res = await fetch("/api/ky", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang, crewLangs: state.crewLangs, date: $("date").value, start: $("start").value, end: $("end").value }),
+      body: JSON.stringify({ sessionId: state.sessionId, text, site: state.site, workType: state.workType, lang: state.lang, crewLangs: state.crewLangs, date: $("date").value, start: Number($("start").value), end: Number($("end").value) }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
@@ -315,7 +343,7 @@ const SPEAK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" 
 const PRINT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 14h10v7H7z"></path></svg>';
 
 function renderSheet() {
-  const T = t(), s = state.sheet, c = state.conditions;
+  const T = t(), s = state.sheet, c = currentConditions();
   const pills = [];
   if (c?.hours_over_stop_rule.length) pills.push(`<span class="pill hot">${esc(T.stopFrom(c.hours_over_stop_rule[0], "≥10"))}</span>`);
   (c?.official_warnings?.active ?? []).forEach((w) => pills.push(`<span class="pill hot">${esc(w[state.lang])}</span>`));

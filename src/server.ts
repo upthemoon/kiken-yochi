@@ -25,18 +25,33 @@ const MAX_SESSIONS = 50;
 const MAX_BODY = 64 * 1024;
 const MAX_FIELD = 500;
 
+// 緯度・経度は、数か、数だけの文字列 (例 "34.7")。true・配列・null などは受けない。
+function toCoord(v: unknown) {
+  if (typeof v === "number") return v;
+  return typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : NaN;
+}
+
 function validSite(v: any) {
-  if (v?.lat == null || v?.lon == null || v.lat === "" || v.lon === "") return null;
-  const lat = Number(v.lat);
-  const lon = Number(v?.lon);
+  const lat = toCoord(v?.lat);
+  const lon = toCoord(v?.lon);
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+}
+
+// 作業日は実在する暦日 (2026-02-31 は受けない)。時刻は 0〜23 の整数 (number 型) だけ。
+function validDate(v: unknown) {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v ? null : v;
+}
+
+function validHour(v: unknown) {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 23 ? v : null;
 }
 
 // 画面で選んだ作業日と時間。形が違えば渡さない (Claude が聞き直す)。
 function validPlan(date: unknown, start: unknown, end: unknown) {
-  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const s = Number(start), e = Number(end);
-  return Number.isInteger(s) && Number.isInteger(e) && 0 <= s && s <= e && e <= 23 ? { date, start: s, end: e } : null;
+  const d = validDate(date), s = validHour(start), e = validHour(end);
+  return d !== null && s !== null && e !== null && s <= e ? { date: d, start: s, end: e } : null;
 }
 
 class BadRequest extends Error {}
@@ -78,14 +93,17 @@ createServer(async (req, res) => {
     // 画面の黄色い帯に出す、現場の予報と注意報・警報。Claude を使わないので API キーなしでも動く。
     if (req.method === "GET" && req.url?.startsWith("/api/conditions?")) {
       const q = new URL(req.url, "http://x").searchParams;
-      const date = q.get("date") ?? "";
-      const start = Number(q.get("start") ?? 8);
-      const end = Number(q.get("end") ?? 17);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(start >= 0 && end <= 23 && start <= end)) return send(400, { error: "日付と時間を確かめてください。" });
+      // 時間は URL の文字列で来るので、整数の書き方 (数字だけ) のものを数にしてから同じ検査にかける。
+      const hourParam = (key: string, fallback: number) => {
+        const raw = q.get(key);
+        return raw === null ? fallback : /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+      };
+      const plan = validPlan(q.get("date"), hourParam("start", 8), hourParam("end", 17));
+      if (!plan) return send(400, { error: "日付と時間を確かめてください。" });
       const place = q.get("place");
       const site = place ? await geocode(place) : validSite({ lat: q.get("lat"), lon: q.get("lon") });
       if (!site) return send(400, { error: "現場の位置が分かりませんでした。" });
-      return send(200, { site, ...(await siteConditions(site, date, start, end)) });
+      return send(200, { site, ...(await siteConditions(site, plan.date, plan.start, plan.end)) });
     }
     if (req.method === "POST" && req.url === "/api/near-miss") {
       const b = await readJson(req);
