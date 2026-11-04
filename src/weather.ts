@@ -1,12 +1,12 @@
 // 現場の位置 (GPS の緯度・経度) から、天気予報と気象の注意報・警報を引く。
 // 予報は Open-Meteo (世界中・キー不要)。注意報・警報は日本国内なら気象庁の公開データ。
-// 高所作業の中止基準は「10 分間の平均風速 10m/s 以上」。予報の 1 時間値で目安を出す。
+// 高所作業の中止基準は「10 分間の平均風速 10m/s 以上」。予報の 1 時間ごとの 10m 風速を目安として比べる (10 分平均そのものではない)。
 
 const STOP_WIND_MS = 10;
 const THUNDER_CODES = new Set([95, 96, 99]);
 
 // 気象庁の注意報・警報のコード (2026 年からの新しい体系・データは warning/data/r8/)。
-// 屋外の工事に関係するものだけ。名前は気象庁の警報ページの表と同じ。
+// 名前は気象庁の警報ページの表と同じ。工事に関係あるかどうかはこちらで決めず、発表中のものは全種類返す。
 const JMA_WARNINGS: Record<string, { ja: string; en: string }> = {
   "10": { ja: "レベル２大雨注意報", en: "Heavy Rain Advisory (Level 2)" },
   "03": { ja: "レベル３大雨警報", en: "Heavy Rain Warning (Level 3)" },
@@ -16,6 +16,10 @@ const JMA_WARNINGS: Record<string, { ja: string; en: string }> = {
   "09": { ja: "レベル３土砂災害警報", en: "Landslide Warning (Level 3)" },
   "49": { ja: "レベル４土砂災害危険警報", en: "Landslide Urgent Warning (Level 4)" },
   "39": { ja: "レベル５土砂災害特別警報", en: "Landslide Emergency Warning (Level 5)" },
+  "19": { ja: "レベル２高潮注意報", en: "Storm Surge Advisory (Level 2)" },
+  "08": { ja: "レベル３高潮警報", en: "Storm Surge Warning (Level 3)" },
+  "48": { ja: "レベル４高潮危険警報", en: "Storm Surge Urgent Warning (Level 4)" },
+  "38": { ja: "レベル５高潮特別警報", en: "Storm Surge Emergency Warning (Level 5)" },
   "15": { ja: "強風注意報", en: "Gale Advisory" },
   "05": { ja: "暴風警報", en: "Storm Warning" },
   "35": { ja: "暴風特別警報", en: "Storm Emergency Warning" },
@@ -25,21 +29,29 @@ const JMA_WARNINGS: Record<string, { ja: string; en: string }> = {
   "12": { ja: "大雪注意報", en: "Heavy Snow Advisory" },
   "06": { ja: "大雪警報", en: "Heavy Snow Warning" },
   "36": { ja: "大雪特別警報", en: "Heavy Snow Emergency Warning" },
+  "16": { ja: "波浪注意報", en: "High Waves Advisory" },
+  "07": { ja: "波浪警報", en: "High Waves Warning" },
+  "37": { ja: "波浪特別警報", en: "High Waves Emergency Warning" },
   "14": { ja: "雷注意報", en: "Thunderstorm Advisory" },
+  "17": { ja: "融雪注意報", en: "Snowmelt Advisory" },
   "20": { ja: "濃霧注意報", en: "Dense Fog Advisory" },
+  "21": { ja: "乾燥注意報", en: "Dry Air Advisory" },
   "22": { ja: "なだれ注意報", en: "Avalanche Advisory" },
+  "23": { ja: "低温注意報", en: "Low Temperature Advisory" },
+  "24": { ja: "霜注意報", en: "Frost Advisory" },
   "25": { ja: "着氷注意報", en: "Ice Accretion Advisory" },
   "26": { ja: "着雪注意報", en: "Snow Accretion Advisory" },
 };
+// 気象庁の発表の状態。「発表警報・注意報はなし」は code のない行で来る。
+const STATUS_NONE = "発表警報・注意報はなし";
+const STATUS_CANCELED = "解除";
 
 export type Site = { lat: number; lon: number };
 
 type JmaArea = { parent: string; name: string; enName: string };
 let areaTable: { class10s: Record<string, JmaArea>; class15s: Record<string, JmaArea>; class20s: Record<string, JmaArea> } | null = null;
-type JmaReport = {
-  reportDatetime: string;
-  warning?: { class20Items?: { areaCode: string; kinds?: { code?: string; status: string }[] }[] };
-};
+type JmaKind = { code?: string; status: string };
+type JmaReport = { reportDatetime: string; warning: { class20Items: { areaCode: string; kinds: JmaKind[] }[] } };
 
 // 国土地理院の逆ジオコーダーで市区町村コードを引き、気象庁の地域コードに直して注意報・警報を読む。
 // 日本の外なら null (予報だけで判断する)。日本の中で読めなかったときは unavailable で返し、画面で「確かめられなかった」と出す。
@@ -58,7 +70,13 @@ async function jmaWarnings(site: Site) {
 }
 
 async function readJmaWarnings(muni: string) {
-  areaTable ??= await fetch("https://www.jma.go.jp/bosai/common/const/area.json").then((r) => r.json());
+  if (!areaTable) {
+    const res = await fetch("https://www.jma.go.jp/bosai/common/const/area.json");
+    if (!res.ok) throw new Error(`気象庁の地域表を読めません (${res.status})`);
+    const table = await res.json();
+    if (!isRecord(table?.class10s) || !isRecord(table?.class15s) || !isRecord(table?.class20s)) throw new Error("気象庁の地域表の形が違います");
+    areaTable = table;
+  }
   // ふつうは市区町村コード + "00"。区域を分けている市町村は同じ頭の地域をまとめて見る。
   // 政令市は区のコード (市のコードのすぐ上・3 桁目が 1) が返るので、10 ずつ下げて市のコードを探す。
   // 例: 大阪市北区 27127 → 27120 → 27110 → 27100 (大阪市)、浜松市天竜区 22140 → 22130 (浜松市)。
@@ -77,21 +95,67 @@ async function readJmaWarnings(muni: string) {
   const codes = all.filter((c) => c.startsWith(prefix));
   if (codes.length === 0) throw new Error(`気象庁の地域コードが見つかりません (${muni})`);
   const city = areaTable!.class20s[codes.includes(prefix + "00") ? prefix + "00" : codes[0]];
-  const office = areaTable!.class10s[areaTable!.class15s[city.parent].parent].parent;
+  const class15 = areaTable!.class15s[city.parent];
+  const class10 = class15 && areaTable!.class10s[class15.parent];
+  if (!class10) throw new Error(`気象庁の地域表で上位の区域をたどれません (${muni})`);
+  const office = class10.parent;
 
-  // 雨・土砂・風・波などの種類ごとに報が分かれて並んでいるので、全部から拾う。
-  const reports: JmaReport[] = await fetch(`https://www.jma.go.jp/bosai/warning/data/r8/${office}.json`).then((r) => r.json());
-  const active = new Map<string, { ja: string; en: string }>();
-  for (const report of reports) {
-    for (const item of report.warning?.class20Items ?? []) {
+  // 雨・土砂・風・波などの種類ごとに報が分かれて並んでいる。古い順に重ねて、区域ごと・種類ごとに最後の状態を採る。
+  const res = await fetch(`https://www.jma.go.jp/bosai/warning/data/r8/${office}.json`);
+  if (!res.ok) throw new Error(`気象庁の警報データを読めません (${res.status})`);
+  const reports = parseJmaReports(await res.json(), codes);
+  const state = new Map<string, { code: string; area: string }>();
+  for (const report of [...reports].sort((a, b) => Date.parse(a.reportDatetime) - Date.parse(b.reportDatetime))) {
+    for (const item of report.warning.class20Items) {
       if (!codes.includes(item.areaCode)) continue;
-      for (const k of item.kinds ?? []) {
-        if (k.code && k.status !== "解除" && JMA_WARNINGS[k.code]) active.set(k.code, JMA_WARNINGS[k.code]);
+      for (const k of item.kinds) {
+        if (!k.code) continue;
+        const key = `${item.areaCode}:${k.code}`;
+        if (k.status === STATUS_CANCELED) state.delete(key);
+        else state.set(key, { code: k.code, area: item.areaCode });
       }
     }
   }
-  const issued_at = reports.map((r) => r.reportDatetime).sort().at(-1) ?? "";
-  return { unavailable: false as const, area: city.name, area_en: city.enName, issued_at, active: [...active.values()] };
+  // 発表中の種類ごとに、出ている区域を持たせる。見ている区域の一部だけなら、名前の後ろに区域を添える。
+  const names = (list: string[], lang: "name" | "enName") => list.map((c) => areaTable!.class20s[c][lang]).join("・");
+  const byCode = new Map<string, string[]>();
+  for (const { code, area } of state.values()) byCode.set(code, [...(byCode.get(code) ?? []), area]);
+  const active = [...byCode].map(([code, areas]) => {
+    const base = JMA_WARNINGS[code] ?? { ja: `不明な注意報・警報が発表中 (コード ${code})`, en: `Unrecognized warning or advisory in effect (code ${code})` };
+    const partial = areas.length < codes.length;
+    return {
+      code,
+      ja: partial ? `${base.ja} (${names(areas, "name")})` : base.ja,
+      en: partial ? `${base.en} (${names(areas, "enName")})` : base.en,
+    };
+  });
+  const issued_at = reports.map((r) => r.reportDatetime).sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1)!;
+  return { unavailable: false as const, area: names(codes, "name"), area_en: names(codes, "enName"), issued_at, active };
+}
+
+function isRecord(v: unknown): v is Record<string, any> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// 気象庁の警報データの形を確かめる。欠けていたり形が違ったりしたら例外にして、呼び出し側で「確かめられなかった」にする。
+// 正当な「発表なし」(code のない行) と、データが欠けているのとは区別する。
+function parseJmaReports(raw: unknown, codes: string[]): JmaReport[] {
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("気象庁の警報データが空か、形が違います");
+  for (const report of raw) {
+    if (!isRecord(report) || typeof report.reportDatetime !== "string" || Number.isNaN(Date.parse(report.reportDatetime))) throw new Error("気象庁の警報データに報の日時がありません");
+    const items = report.warning?.class20Items;
+    if (!Array.isArray(items)) throw new Error("気象庁の警報データに市町村の区域がありません");
+    for (const item of items) {
+      if (!isRecord(item) || typeof item.areaCode !== "string" || !Array.isArray(item.kinds)) throw new Error("気象庁の警報データの区域の形が違います");
+      for (const k of item.kinds) {
+        if (!isRecord(k) || typeof k.status !== "string" || k.status === "") throw new Error("気象庁の警報データの状態がありません");
+        if (k.code === undefined ? k.status !== STATUS_NONE : typeof k.code !== "string" || !/^\d{2}$/.test(k.code)) throw new Error("気象庁の警報データの種類の形が違います");
+      }
+    }
+    // 見ている区域がどれか欠けていれば、その報では「ない」のか分からない。
+    for (const c of codes) if (!items.some((i: any) => i.areaCode === c)) throw new Error(`気象庁の警報データに見ている区域がありません (${c})`);
+  }
+  return raw as JmaReport[];
 }
 
 export async function siteConditions(site: Site, date: string, startHour: number, endHour: number) {
@@ -105,25 +169,31 @@ export async function siteConditions(site: Site, date: string, startHour: number
   url.searchParams.set("end_date", date);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`天気予報の取得に失敗しました (${res.status})`);
-  const h = (await res.json()).hourly as {
-    time: string[];
-    wind_speed_10m: number[];
-    wind_gusts_10m: number[];
-    precipitation_probability: number[];
-    weather_code: number[];
-    temperature_2m: number[];
-  };
+  const h = (await res.json())?.hourly;
+  // 配列の長さがそろっているか、対象の時間の値が数として入っているかを確かめる。欠けた予報を「安全」と見せない。
+  const series = ["wind_speed_10m", "wind_gusts_10m", "precipitation_probability", "weather_code", "temperature_2m"] as const;
+  if (!Array.isArray(h?.time) || series.some((k) => !Array.isArray(h[k]) || h[k].length !== h.time.length)) throw new Error("天気予報の形が違います");
 
-  const hours = h.time
-    .map((t, i) => ({
-      hour: Number(t.slice(11, 13)),
-      wind_ms: h.wind_speed_10m[i],
-      gust_ms: h.wind_gusts_10m[i],
-      rain_percent: h.precipitation_probability[i],
-      temp_c: h.temperature_2m[i],
-      thunder: THUNDER_CODES.has(h.weather_code[i]),
-    }))
-    .filter((x) => x.hour >= startHour && x.hour <= endHour);
+  const hours = (h.time as unknown[])
+    .map((t, i) => {
+      if (typeof t !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t)) throw new Error("天気予報の時刻の形が違います");
+      return {
+        date: t.slice(0, 10),
+        hour: Number(t.slice(11, 13)),
+        wind_ms: h.wind_speed_10m[i] as unknown,
+        gust_ms: h.wind_gusts_10m[i] as unknown,
+        rain_percent: h.precipitation_probability[i] as unknown,
+        temp_c: h.temperature_2m[i] as unknown,
+        code: h.weather_code[i] as unknown,
+      };
+    })
+    .filter((x) => x.date === date && x.hour >= startHour && x.hour <= endHour)
+    .map((x) => {
+      const nums = [x.wind_ms, x.gust_ms, x.rain_percent, x.temp_c, x.code];
+      if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) throw new Error("天気予報に欠けた値があります");
+      return { hour: x.hour, wind_ms: x.wind_ms as number, gust_ms: x.gust_ms as number, rain_percent: x.rain_percent as number, temp_c: x.temp_c as number, thunder: THUNDER_CODES.has(x.code as number) };
+    });
+  if (hours.length === 0) throw new Error("天気予報に、指定した時間の値がありません");
 
   return {
     date,
