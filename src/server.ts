@@ -101,7 +101,7 @@ createServer(async (req, res) => {
       const plan = validPlan(q.get("date"), hourParam("start", 8), hourParam("end", 17));
       if (!plan) return send(400, { error: "日付と時間を確かめてください。" });
       const place = q.get("place");
-      const site = place ? await geocode(place) : validSite({ lat: q.get("lat"), lon: q.get("lon") });
+      const site = place ? validSite(await geocode(place)) : validSite({ lat: q.get("lat"), lon: q.get("lon") });
       if (!site) return send(400, { error: "現場の位置が分かりませんでした。" });
       return send(200, { site, ...(await siteConditions(site, plan.date, plan.start, plan.end)) });
     }

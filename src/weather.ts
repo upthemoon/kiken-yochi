@@ -147,11 +147,22 @@ function parseJmaReports(raw: unknown, codes: string[]): JmaReport[] {
     if (!Array.isArray(items)) throw new Error("気象庁の警報データに市町村の区域がありません");
     for (const item of items) {
       if (!isRecord(item) || typeof item.areaCode !== "string" || !Array.isArray(item.kinds)) throw new Error("気象庁の警報データの区域の形が違います");
+      // 空の kinds は「発表なし」ではなく、読めなかったものとして扱う。発表なしは STATUS_NONE の 1 行だけ。
+      if (item.kinds.length === 0) throw new Error("気象庁の警報データの区域に種類がありません");
+      const none = item.kinds.filter((k: any) => isRecord(k) && k.code === undefined);
+      if (none.length > 0 && item.kinds.length !== 1) throw new Error("気象庁の警報データで「発表なし」と種類が混ざっています");
+      const seen = new Set<string>();
       for (const k of item.kinds) {
         if (!isRecord(k) || typeof k.status !== "string" || k.status === "") throw new Error("気象庁の警報データの状態がありません");
-        if (k.code === undefined ? k.status !== STATUS_NONE : typeof k.code !== "string" || !/^\d{2}$/.test(k.code)) throw new Error("気象庁の警報データの種類の形が違います");
+        if (k.code === undefined) {
+          if (k.status !== STATUS_NONE) throw new Error("気象庁の警報データの種類の形が違います");
+        } else if (typeof k.code !== "string" || !/^\d{2}$/.test(k.code) || k.status === STATUS_NONE || seen.has(k.code)) {
+          throw new Error("気象庁の警報データの種類の形が違います");
+        } else seen.add(k.code);
       }
     }
+    const areaCodes = items.map((i: any) => i.areaCode);
+    if (new Set(areaCodes).size !== areaCodes.length) throw new Error("気象庁の警報データで区域が重複しています");
     // 見ている区域がどれか欠けていれば、その報では「ない」のか分からない。
     for (const c of codes) if (!items.some((i: any) => i.areaCode === c)) throw new Error(`気象庁の警報データに見ている区域がありません (${c})`);
   }
@@ -174,26 +185,20 @@ export async function siteConditions(site: Site, date: string, startHour: number
   const series = ["wind_speed_10m", "wind_gusts_10m", "precipitation_probability", "weather_code", "temperature_2m"] as const;
   if (!Array.isArray(h?.time) || series.some((k) => !Array.isArray(h[k]) || h[k].length !== h.time.length)) throw new Error("天気予報の形が違います");
 
-  const hours = (h.time as unknown[])
-    .map((t, i) => {
-      if (typeof t !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t)) throw new Error("天気予報の時刻の形が違います");
-      return {
-        date: t.slice(0, 10),
-        hour: Number(t.slice(11, 13)),
-        wind_ms: h.wind_speed_10m[i] as unknown,
-        gust_ms: h.wind_gusts_10m[i] as unknown,
-        rain_percent: h.precipitation_probability[i] as unknown,
-        temp_c: h.temperature_2m[i] as unknown,
-        code: h.weather_code[i] as unknown,
-      };
-    })
-    .filter((x) => x.date === date && x.hour >= startHour && x.hour <= endHour)
-    .map((x) => {
-      const nums = [x.wind_ms, x.gust_ms, x.rain_percent, x.temp_c, x.code];
-      if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) throw new Error("天気予報に欠けた値があります");
-      return { hour: x.hour, wind_ms: x.wind_ms as number, gust_ms: x.gust_ms as number, rain_percent: x.rain_percent as number, temp_c: x.temp_c as number, thunder: THUNDER_CODES.has(x.code as number) };
-    });
-  if (hours.length === 0) throw new Error("天気予報に、指定した時間の値がありません");
+  const rows = (h.time as unknown[]).map((t, i) => {
+    if (typeof t !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t)) throw new Error("天気予報の時刻の形が違います");
+    return { date: t.slice(0, 10), hour: Number(t.slice(11, 13)), i };
+  });
+  // 指定した時間のそれぞれに、その日の時刻がちょうど 1 件あり、値がすべて数であること。欠けた時間や重複は予報として使わない。
+  const hours = [];
+  for (let hour = startHour; hour <= endHour; hour++) {
+    const hit = rows.filter((r) => r.date === date && r.hour === hour);
+    if (hit.length !== 1) throw new Error(`天気予報の ${hour} 時の値が ${hit.length === 0 ? "ありません" : "重複しています"}`);
+    const i = hit[0].i;
+    const v = [h.wind_speed_10m[i], h.wind_gusts_10m[i], h.precipitation_probability[i], h.temperature_2m[i], h.weather_code[i]] as unknown[];
+    if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) throw new Error(`天気予報の ${hour} 時に欠けた値があります`);
+    hours.push({ hour, wind_ms: v[0] as number, gust_ms: v[1] as number, rain_percent: v[2] as number, temp_c: v[3] as number, thunder: THUNDER_CODES.has(v[4] as number) });
+  }
 
   return {
     date,

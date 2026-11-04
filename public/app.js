@@ -18,6 +18,7 @@ const TEXT = {
     thunderLine: (hs) => `雷の予報: ${hs}`,
     gustLine: (g) => `一番強い突風 ${g}m/s`,
     upperNote: "鉄塔の上や尾根は、予報 (地上 10m) より強いことが多い。",
+    scopeNote: "洪水の警報・注意報は対象外です。川の近くは気象庁の洪水の発表を確かめてください。",
     decide: "中止・続行の判断は現場の責任者が行います。",
     source: (area, at) => `予報: Open-Meteo${area ? ` / 注意報・警報: 気象庁 ${area} (${at} 発表)` : area === null ? "" : " / 気象庁の注意報・警報は日本国内のみ"}`,
     warnUnknown: "気象庁の注意報・警報を確かめられませんでした",
@@ -54,6 +55,7 @@ const TEXT = {
     thunderLine: (hs) => `Thunder: ${hs}`,
     gustLine: (g) => `Strongest gust ${g} m/s`,
     upperNote: "Tower tops and ridges usually see stronger wind than the 10 m forecast.",
+    scopeNote: "Flood warnings and advisories are not covered. Near rivers, check JMA's flood information.",
     decide: "The person in charge makes the final stop / go call.",
     source: (area, at) => `Forecast: Open-Meteo${area ? ` / Warnings: JMA ${area} (issued ${at})` : area === null ? "" : " / JMA warnings cover Japan only"}`,
     warnUnknown: "Couldn't check JMA weather warnings",
@@ -97,6 +99,7 @@ const state = {
   site: null,
   conditions: null,
   conditionsFor: null,
+  siteQuery: null,
   sessionId: null,
   sheet: null,
   step: "talk",
@@ -187,7 +190,10 @@ async function loadConditions(query) {
   // 古い結果は、新しい要求の答えが来るまで (失敗したときも) 用紙や帯に残さない。
   state.conditions = null;
   state.conditionsFor = null;
-  if (query.place) state.site = null;
+  // 現場を変えている最中・失敗したときは、前の現場の位置を Claude に渡さない (位置未取得として扱う)。
+  // 日付や時間を変えたときに同じ場所で引き直せるよう、要求先は別に覚えておく。
+  state.site = null;
+  state.siteQuery = query;
   bannerMessage(t().loadingWx);
   const q = new URLSearchParams({ ...query, ...asked });
   try {
@@ -237,6 +243,7 @@ function renderBanner() {
   if (unknown) lines.push(T.warnUnknownLine);
   lines.push(T.gustLine(c.max_gust_ms.toFixed(1)));
   lines.push(T.upperNote);
+  lines.push(T.scopeNote);
 
   const ow = c.official_warnings;
   const area = ow?.area ? (state.lang === "en" ? ow.area_en : ow.area) : "";
@@ -274,7 +281,7 @@ $("place-form").addEventListener("submit", (e) => {
 // 日付や時間を変えたら、同じ現場で引き直す
 ["date", "start", "end"].forEach((id) =>
   $(id).addEventListener("change", () => {
-    if (state.site) loadConditions({ lat: state.site.lat, lon: state.site.lon });
+    if (state.siteQuery) loadConditions(state.siteQuery);
   }),
 );
 
@@ -366,6 +373,7 @@ function renderSheet() {
     <p class="meta">${esc(s.work)} ・ ${esc(s.place_and_height)} ・ ${esc(s.crew)}</p>
     <div class="pill-row">${pills.join("")}</div>
     <p class="meta">${esc(s.weather)}</p>
+    <p class="meta">${esc(T.scopeNote)}</p>
     ${hazards}
     <section class="checks"><h3>${esc(T.checksTitle)}</h3><ul>${checks}</ul></section>
     ${past}
